@@ -1,0 +1,315 @@
+CRA - Mise en ligne du site sur le serveur
+Application de compte rendu d'activite - partie web
+Version du 11/08/2026
+
+
+SOMMAIRE
+   1. Ce que contient ce dossier
+   2. Prerequis serveur
+   3. Mise en ligne (une commande)
+   4. Relier le site a la base de donnees
+   5. Creer les comptes
+   6. En cas de probleme
+   7. Exploitation courante
+   8. Ce qui est en place cote securite
+
+
+1. CE QUE CONTIENT CE DOSSIER
+-----------------------------
+
+  DEPLOIEMENT.txt          ce document
+  mettre-en-ligne.ps1.txt  l'application web + son installation
+
+Le second fichier contient l'application deja compilee : il n'y a rien a
+construire, rien a telecharger, aucun outil de developpement a installer.
+Les fichiers de l'application y sont encodes en texte, ce qui permet de
+faire circuler l'ensemble par messagerie.
+
+Avant utilisation, retirer l'extension .txt :
+
+  mettre-en-ligne.ps1.txt   ->   mettre-en-ligne.ps1
+
+(clic droit > Renommer ; ou en PowerShell, depuis le dossier :
+ Rename-Item .\mettre-en-ligne.ps1.txt .\mettre-en-ligne.ps1)
+
+Une fois deposee, l'application se compose de :
+  Cra.Web.dll                le programme (regles metier, API, securite)
+  Cra.Regles.dll             les regles de saisie (450 min, gel, astreinte)
+  Microsoft.*.dll, System.*  le pilote de connexion a SQL Server
+  wwwroot\index.html         l'interface utilisateur (page unique)
+  web.config                 le raccordement a IIS
+  configuration.exemple.json le modele de configuration (partie 4)
+
+Perimetre fonctionnel de cette version : espace technicien complet
+(calendrier, saisie d'une journee, HNO, astreintes, series et recurrences,
+changement de mot de passe). Un manager ou un administrateur peut se
+connecter mais obtient un ecran "a venir" : ces espaces font l'objet des
+livraisons suivantes.
+
+
+2. PREREQUIS SERVEUR
+--------------------
+
+Trois elements, a installer UNE FOIS, dans cet ordre.
+
+  a) Le role IIS
+     Gestionnaire de serveur > Ajouter des roles et fonctionnalites >
+     Serveur Web (IIS). Les options par defaut suffisent.
+
+  b) Les outils de script IIS (souvent deja inclus)
+     En PowerShell administrateur :
+       Install-WindowsFeature Web-Scripting-Tools
+
+  c) Le .NET Hosting Bundle 10
+     Installeur gratuit Microsoft, rechercher "ASP.NET Core 10 Hosting
+     Bundle" sur le site officiel. Environ 100 Mo, installation
+     suivant-suivant, aucune licence.
+
+     IMPORTANT : l'installer APRES IIS. Installe avant, il ne se raccorde
+     pas au serveur web ; dans ce cas, relancer son installeur en mode
+     Reparer suffit a corriger.
+
+     Verification :
+       dotnet --list-runtimes
+     Une ligne commencant par "Microsoft.AspNetCore.App 10." doit
+     apparaitre.
+
+A ne pas confondre : le SDK .NET sert a FABRIQUER une application, le
+Hosting Bundle sert a la FAIRE TOURNER. L'application etant deja
+compilee, seul le Hosting Bundle est necessaire ici. Le SDK n'a pas a
+etre installe sur le serveur.
+
+Dimensionnement pour une equipe d'une dizaine de personnes : 2 processeurs
+virtuels, 4 Go de memoire, 20 Go de disque. Une machine virtuelle
+standard convient largement.
+
+Reseau : un seul flux a ouvrir entre les postes et le serveur, en TCP
+port 80. Le port SQL (1433) reste ferme : aucun poste ne se connecte
+directement a la base, seule l'application le fait, en local sur le
+serveur.
+
+
+3. MISE EN LIGNE (UNE COMMANDE)
+-------------------------------
+
+Copier les deux fichiers sur le serveur (par exemple dans C:\depot),
+renommer le script comme indique en partie 1, puis ouvrir PowerShell
+en tant qu'administrateur et lancer :
+
+  cd C:\depot
+  powershell -ExecutionPolicy Bypass -File .\mettre-en-ligne.ps1
+
+Le script effectue les operations suivantes :
+
+  - controle des prerequis de la partie 2, avec un message explicite si
+    l'un d'eux manque (il s'arrete plutot que de laisser une installation
+    a moitie faite) ;
+  - depot de l'application dans C:\inetpub\cra ;
+  - creation du pool d'application "CRA" en mode code non manage ;
+  - creation du site IIS "CRA" sur le port 80, en arretant au besoin le
+    site par defaut qui occupe ce port ;
+  - attribution des droits de lecture au compte du pool ;
+  - creation de la regle de pare-feu locale "CRA HTTP" ;
+  - demarrage, puis controle que la page d'accueil repond.
+
+Options disponibles :
+
+  -Dossier "D:\sites\cra"    installer ailleurs que dans C:\inetpub\cra
+  -Port 8080                 utiliser un autre port
+  -ExtraireSeulement         deposer les fichiers sans toucher a IIS
+  -ChaineConnexion "..."     si la base est deja prete, ecrire directement
+                             la configuration de la partie 4
+
+Resultat attendu en fin d'execution :
+
+  ok   page d'accueil servie (http://localhost:80/ repond 200)
+       Site en ligne, base pas encore reliee (/sante = DEGRADE).
+
+Ce message n'est pas une erreur : il indique que le site fonctionne et
+qu'il attend la base de donnees. C'est l'objet de la partie suivante.
+
+
+4. RELIER LE SITE A LA BASE DE DONNEES
+--------------------------------------
+
+Cette partie suppose que la base est disponible : une base SQL Server
+nommee cra, contenant le schema de l'application, et un compte SQL
+dedie (cra_app dans les scripts fournis separement) disposant des droits
+de lecture et d'ecriture sur cette base.
+
+L'application cherche ou se connecter a deux endroits, dans cet ordre :
+
+  1. la variable d'environnement machine CRA_CONNEXION, si elle existe ;
+  2. le fichier configuration.json, place a cote de Cra.Web.dll.
+
+Si aucune des deux sources n'est presente, l'application refuse de
+demarrer et l'indique dans les journaux, plutot que de fonctionner a
+moitie.
+
+Marche a suivre avec le fichier (le plus simple) :
+
+  cd C:\inetpub\cra
+  copy configuration.exemple.json configuration.json
+  notepad configuration.json
+
+Remplacer A_REMPLIR par le mot de passe du compte SQL :
+
+  {
+    "chaineConnexion": "Server=.\\SQLEXPRESS;Database=cra;User Id=cra_app;Password=LE_MOT_DE_PASSE;TrustServerCertificate=True"
+  }
+
+Lecture de cette ligne :
+  Server    l'instance SQL. .\SQLEXPRESS designe l'instance Express
+            locale. Attention : dans ce fichier, le caractere \ s'ecrit
+            en double.
+  Database  le nom de la base.
+  User Id / Password   un compte SQL (pas un compte Windows).
+  TrustServerCertificate=True   connexion locale sans certificat.
+
+Le fichier contient un mot de passe : en restreindre la lecture.
+
+  icacls C:\inetpub\cra\configuration.json /inheritance:r /grant "Administrateurs:F" "SYSTEM:F" "IIS AppPool\CRA:R"
+
+Puis appliquer :
+
+  Restart-WebAppPool CRA
+
+Verification :
+
+  Invoke-RestMethod http://localhost/sante
+
+  statut = OK        application demarree et base joignable
+  statut = DEGRADE   application demarree, base injoignable
+                     (mot de passe, nom d'instance, ou service SQL arrete)
+
+Ce fichier est conserve lors des mises a jour ulterieures : cette etape
+ne se refait pas.
+
+Variante sans fichier, si vous preferez que le mot de passe ne figure
+dans aucun fichier du site :
+
+  [Environment]::SetEnvironmentVariable("CRA_CONNEXION", "Server=.\SQLEXPRESS;Database=cra;User Id=cra_app;Password=LE_MOT_DE_PASSE;TrustServerCertificate=True", "Machine")
+  Restart-WebAppPool CRA
+
+(dans cette forme, en dehors du fichier JSON, le \ s'ecrit simple.)
+
+
+5. CREER LES COMPTES
+--------------------
+
+Aucun compte n'existe par defaut : ni identifiant, ni mot de passe cable
+dans le produit. Les comptes se creent sur le serveur, depuis le dossier
+de l'application.
+
+  cd C:\inetpub\cra
+  dotnet .\Cra.Web.dll creer-admin admin "Administrateur"
+  dotnet .\Cra.Web.dll creer-utilisateur prenom.nom "Prenom Nom" TECHNICIEN
+
+Repeter la derniere ligne pour chaque technicien. Roles disponibles :
+TECHNICIEN, MANAGER, ADMIN.
+
+Le mot de passe est demande a l'ecran, jamais passe en parametre et
+jamais stocke en clair. Les comptes crees par creer-utilisateur doivent
+changer leur mot de passe a la premiere connexion.
+
+Ne pas confondre le compte SQL de la partie 4 (utilise par l'application
+pour parler a la base, invisible des utilisateurs) et les comptes
+ci-dessus (ceux que l'equipe saisit sur l'ecran de connexion).
+
+L'equipe accede ensuite au site par son adresse reseau, par exemple
+http://serveur1.
+
+
+6. EN CAS DE PROBLEME
+---------------------
+
+  Symptome                          Cause probable et action
+  --------------------------------  ----------------------------------------
+  "Failed to fetch" sur la page     La page a ete ouverte en double-cliquant
+                                    le fichier index.html. Elle doit etre
+                                    servie par le serveur : l'adresse doit
+                                    commencer par http:// et non file:///
+
+  Erreur 500.19 ou page blanche     Hosting Bundle absent ou installe avant
+                                    IIS. Relancer son installeur en mode
+                                    Reparer, puis iisreset.
+
+  Erreur 502.5                      L'application ne demarre pas. Le plus
+                                    souvent : aucune configuration (partie 4).
+                                    Consulter l'Observateur d'evenements >
+                                    Journaux Windows > Application.
+
+  Le site ne repond pas du tout     Verifier l'etat du pool :
+                                      Get-WebAppPoolState CRA
+                                      Start-WebAppPool CRA
+                                    et que le port 80 n'est pas pris par un
+                                    autre site (Get-Website).
+
+  /sante repond DEGRADE             Base injoignable : mot de passe, nom
+                                    d'instance, ou service SQL arrete.
+                                    Test independant de l'application :
+                                      sqlcmd -S .\SQLEXPRESS -d cra -U cra_app -P LE_MOT_DE_PASSE -Q "SELECT 1;"
+
+  Accessible en local mais pas      Flux reseau non ouvert entre les postes
+  depuis un poste                   et le serveur sur le port 80, ou nom DNS
+                                    non resolu. Tester avec l'adresse IP.
+
+  Message d'erreur a l'ecran        Chaque reponse porte un identifiant de
+                                    correlation (en-tete X-Correlation) qui
+                                    permet de retrouver l'evenement
+                                    correspondant dans les journaux.
+
+
+7. EXPLOITATION COURANTE
+------------------------
+
+  Redemarrer l'application     Restart-WebAppPool CRA
+  Arreter le site              Stop-WebAppPool CRA
+  Etat du site                 Get-WebAppPoolState CRA ; Get-Website CRA
+  Controle de bon              Invoke-RestMethod http://localhost/sante
+  fonctionnement
+
+  Mise a jour d'une version    Relancer mettre-en-ligne.ps1 avec le nouveau
+                               fichier fourni. Le script conserve
+                               configuration.json et sauvegarde la version
+                               en place dans C:\inetpub\cra.avant-<date>.
+
+  Retour arriere               Copier le contenu du dossier
+                               C:\inetpub\cra.avant-<date> par-dessus
+                               C:\inetpub\cra, puis Restart-WebAppPool CRA.
+
+  Journaux detailles           En cas de diagnostic, passer temporairement
+                               stdoutLogEnabled a "true" dans web.config,
+                               reproduire, consulter le dossier logs\, puis
+                               remettre a "false".
+
+La base de donnees a sa propre exploitation (sauvegardes, restauration) :
+elle ne depend pas de ce dossier.
+
+
+8. CE QUI EST EN PLACE COTE SECURITE
+------------------------------------
+
+  - mots de passe stockes haches (PBKDF2-SHA256, 600 000 iterations),
+    jamais en clair, jamais reversibles ;
+  - verrouillage du compte 15 minutes apres 5 echecs, tentatives
+    journalisees ;
+  - session par cookie HttpOnly SameSite=Strict, expiration 12 heures ;
+  - protection contre les requetes forgees (en-tete exige sur toute
+    ecriture) ;
+  - requetes SQL entierement parametrees ; le compte applicatif dispose
+    du minimum de droits necessaires ;
+  - regles metier appliquees cote serveur et en base, jamais seulement
+    dans le navigateur ;
+  - chaque ecriture est enregistree au journal d'audit dans la meme
+    transaction que la donnee ;
+  - identifiant de correlation sur chaque reponse, pour rapprocher un
+    incident utilisateur des journaux du serveur.
+
+Le trafic circule en HTTP non chiffre sur le reseau interne : choix
+assume au vu du contexte. Le passage en HTTPS reste possible plus tard
+par simple ajout d'une liaison sur le port 443 avec un certificat dans
+IIS, sans modification de l'application.
+
+
+Contact projet : Akli
