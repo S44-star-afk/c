@@ -806,7 +806,7 @@ dialog[open] { animation: apparition-dlg 0.18s ease; }
 <dialog id="dlg-saisie" aria-labelledby="ds-titre">
   <div class="dlg-entete"><h2 id="ds-titre"></h2></div>
   <div class="dlg-corps">
-    <div class="champ"><label id="ds-label" for="ds-input"></label><input id="ds-input" class="in-txt"></div>
+    <div class="champ"><label id="ds-label" for="ds-input"></label><div id="ds-controle"></div></div>
     <div class="avert avert-erreur" id="ds-erreur" hidden></div>
   </div>
   <div class="dlg-pied">
@@ -942,7 +942,7 @@ async function apresConnexion() {
   $("#ecran-connexion").hidden = true;
   $("#app").hidden = false;
   $("#top-utilisateur").textContent = etat.moi.nom;
-  $("#top-role").textContent = etat.moi.roles.includes("TECHNICIEN") ? "Technicien" : etat.moi.roles[0] || "?";
+  $("#top-role").textContent = (etat.moi.rolesAffiches && etat.moi.rolesAffiches[0]) || etat.moi.roles[0] || "?";
   $("#avatar-utilisateur").textContent = etat.moi.nom.split(/\s+/).map(x => x[0]).join("").slice(0, 2).toUpperCase();
   $("#top-date").textContent = "Aujourd'hui : " + formatDateLongue(AUJOURDHUI);
 
@@ -1490,13 +1490,15 @@ function demanderTexte(titre, label, opts) {
   opts = opts || {};
   $("#ds-titre").textContent = titre;
   $("#ds-label").textContent = label;
-  const inp = $("#ds-input");
-  inp.type = opts.type || "text";
-  inp.value = opts.valeur || "";
-  inp.placeholder = opts.placeholder || "";
+  if (opts.options) {
+    $("#ds-controle").innerHTML = champSelect("ds-input", opts.options, opts.valeur == null ? "" : opts.valeur, opts.vide);
+  } else {
+    $("#ds-controle").innerHTML = `<input id="ds-input" class="in-txt" type="${opts.type || "text"}" placeholder="${echap(opts.placeholder || "")}">`;
+    $("#ds-input").value = opts.valeur || "";
+  }
   $("#ds-erreur").hidden = true;
   $("#dlg-saisie").showModal();
-  setTimeout(() => inp.focus(), 30);
+  setTimeout(() => { const el = $("#ds-input"); if (el) { el.focus(); } }, 30);
   return new Promise(res => { dsResolve = res; });
 }
 function demanderConfirmation(texte, libelleOui, action) {
@@ -1566,12 +1568,20 @@ async function rendreMgrDetail() {
 
 /* ---------- ADMIN : comptes ---------- */
 async function rendreAdmComptes() {
-  const users = await api("/api/admin/utilisateurs");
+  const [users, profils, infoRoles] = await Promise.all([
+    api("/api/admin/utilisateurs"), api("/api/admin/profils-actifs"), api("/api/admin/roles")]);
+  const optsProfil = profils.map(p => ({ v: p.id, t: p.texte }));
+  etat.optsProfil = optsProfil;
+  const optsRole = infoRoles.roles.map(r => ({ v: r.code, t: r.libelle + " (" + r.code + ")" }));
+  etat.optsRoles = optsRole;
   const rows = users.map(u => `<tr>
       <td>${echap(u.nom)}<div class="texte-secondaire" style="font-size:.76rem">${echap(u.login)}${u.email ? " · " + echap(u.email) : ""}</div></td>
       <td>${u.roles.map(r => `<span class="pastille p-neutre">${echap(r)}</span>`).join(" ")}</td>
+      <td>${u.profil ? echap(u.profil) : '<span class="texte-secondaire">—</span>'}</td>
       <td><span class="pastille ${u.statut === "ACTIF" ? "p-ok" : "p-retard"}">${echap(u.statut.toLowerCase())}</span>${u.doitChangerMdp ? ' <span class="texte-secondaire" style="font-size:.72rem">mdp à changer</span>' : ""}</td>
       <td class="actions-tbl">
+        <button class="btn btn-petit" data-act="adm.role" data-id="${u.id}" data-role="${echap(u.roles[0] || "")}">Rôle</button>
+        <button class="btn btn-petit" data-act="adm.profil" data-id="${u.id}" data-prof="${u.profilId == null ? "" : u.profilId}">Profil</button>
         <button class="btn btn-petit" data-act="adm.mdp" data-id="${u.id}" data-nom="${echap(u.nom)}">Réinit. mdp</button>
         ${u.statut === "ACTIF"
           ? `<button class="btn btn-petit" data-act="adm.statut" data-id="${u.id}" data-s="DESACTIVE">Désactiver</button>`
@@ -1586,22 +1596,48 @@ async function rendreAdmComptes() {
         <div class="champ"><label for="n-login">Login</label><input id="n-login" class="in-txt"></div>
         <div class="champ"><label for="n-nom">Nom affiché</label><input id="n-nom" class="in-txt"></div>
         <div class="champ"><label for="n-email">E-mail (option.)</label><input id="n-email" class="in-txt"></div>
-        <div class="champ"><label for="n-role">Rôle</label>${champSelect("n-role", [{ v: "TECHNICIEN", t: "Technicien" }, { v: "MANAGER", t: "Manager" }, { v: "ADMIN", t: "Administrateur" }], "TECHNICIEN")}</div>
+        <div class="champ"><label for="n-role">Rôle</label>${champSelect("n-role", optsRole, "TECHNICIEN")}</div>
+        <div class="champ"><label for="n-profil">Profil</label>${champSelect("n-profil", optsProfil, "", "— aucun —")}</div>
         <div class="champ"><label for="n-mdp">Mot de passe initial</label><input id="n-mdp" class="in-txt" type="text" placeholder="≥ 12 caractères"></div>
         <button class="btn btn-primaire" data-act="adm.creer">Créer</button>
       </div>
-      <p class="texte-secondaire" style="font-size:.8rem;margin:8px 0 0">Le compte devra changer son mot de passe à la première connexion.</p>
+      <p class="texte-secondaire" style="font-size:.8rem;margin:8px 0 0">Le compte devra changer son mot de passe à la première connexion. Le rôle donne les droits ; le profil (métier + niveau) se gère dans l'onglet Référentiels.</p>
     </div>
     <div class="carte"><table class="tbl">
-      <thead><tr><th>Utilisateur</th><th>Rôles</th><th>Statut</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Utilisateur</th><th>Rôles</th><th>Profil</th><th>Statut</th><th>Actions</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
 }
 
 /* ---------- ADMIN : référentiels ---------- */
 async function rendreAdmRef() {
-  const [ttks, projets, feries, parametres] = await Promise.all([
-    api("/api/admin/ttk"), api("/api/admin/projets"), api("/api/admin/feries"), api("/api/admin/parametres")
+  const [ttks, projets, profils, feries, parametres, infoRoles] = await Promise.all([
+    api("/api/admin/ttk"), api("/api/admin/projets"), api("/api/admin/profils"), api("/api/admin/feries"), api("/api/admin/parametres"), api("/api/admin/roles")
   ]);
+  const OPTS_ACCES = [{ v: "TECHNICIEN", t: "Technicien (saisie)" }, { v: "MANAGER", t: "Manager (tableaux + exports)" }, { v: "ADMIN", t: "Administrateur (tout)" }];
+  const tableRoles = `
+    <div class="carte sous-carte" style="padding:16px">
+      <h3>Rôles</h3>
+      ${infoRoles.accesGerable ? `
+      <div class="filtres" style="margin-bottom:12px">
+        <div class="champ" style="min-width:120px"><label>Code</label><input id="role-code" class="in-txt" placeholder="INGE_CTX_N1"></div>
+        <div class="champ"><label>Libellé</label><input id="role-lib" class="in-txt" placeholder="Ingénieur Citrix"></div>
+        <div class="champ"><label>Droits d'accès</label>${champSelect("role-acces", OPTS_ACCES, "TECHNICIEN")}</div>
+        <button class="btn btn-primaire" data-act="adm.roleCreer">Ajouter</button>
+      </div>` : `<div class="avert avert-info" style="margin-bottom:12px">Pour créer des rôles ici, exécuter la migration 007_roles_dynamiques.sql sur la base.</div>`}
+      <table class="tbl"><thead><tr><th>Code</th><th>Libellé</th><th>Droits d'accès</th><th class="num">Comptes</th><th>Actions</th></tr></thead><tbody>
+        ${infoRoles.roles.map(x => `<tr>
+          <td>${echap(x.code)}${x.protege ? ' <span class="texte-secondaire" style="font-size:.72rem">(socle)</span>' : ""}</td>
+          <td>${echap(x.libelle)}</td>
+          <td><span class="pastille p-neutre">${echap(x.acces)}</span></td>
+          <td class="num">${x.comptes}</td>
+          <td class="actions-tbl">
+            ${x.protege || !infoRoles.accesGerable ? "" : `
+            <button class="btn btn-petit" data-act="adm.roleAcces" data-id="${x.id}" data-lib="${echap(x.libelle)}" data-acces="${echap(x.acces)}">Droits</button>
+            ${x.comptes === 0 ? `<button class="btn btn-petit btn-danger" data-act="adm.roleSuppr" data-id="${x.id}" data-code="${echap(x.code)}">Supprimer</button>` : ""}`}
+          </td></tr>`).join("")}
+      </tbody></table>
+      <p class="texte-secondaire" style="font-size:.8rem;margin:8px 0 0">Le rôle porte les droits (via son niveau d'accès) ; le profil porte le métier et le niveau. Les rôles socles ne se modifient pas.</p>
+    </div>`;
   const tableRef = (titre, kind, liste) => `
     <div class="carte sous-carte" style="padding:16px">
       <h3>${echap(titre)}</h3>
@@ -1643,7 +1679,27 @@ async function rendreAdmRef() {
           <td><button class="btn btn-petit" data-act="adm.param" data-cle="${echap(p.cle)}" data-val="${echap(p.valeur)}">Modifier</button></td></tr>`).join("")}
       </tbody></table>
     </div>`;
-  $("#contenu").innerHTML = tableRef("TTK (thèmes)", "ttk", ttks) + tableRef("Projets", "projets", projets) + tableFeries + tableParam;
+  const tableProfil = `
+    <div class="carte sous-carte" style="padding:16px">
+      <h3>Profils (fonction + niveau)</h3>
+      <div class="filtres" style="margin-bottom:12px">
+        <div class="champ" style="min-width:110px"><label>Code</label><input id="profil-code" class="in-txt" placeholder="INGE_CTX_N3"></div>
+        <div class="champ"><label>Fonction</label><input id="profil-fonction" class="in-txt" placeholder="Ingénieur Citrix"></div>
+        <div class="champ"><label>Niveau</label><input id="profil-niveau" class="in-txt" placeholder="Sénior"></div>
+        <button class="btn btn-primaire" data-act="adm.profilCreer">Ajouter</button>
+      </div>
+      <table class="tbl"><thead><tr><th>Code</th><th>Fonction</th><th>Niveau</th><th>Statut</th><th>Actions</th></tr></thead><tbody>
+        ${profils.map(x => `<tr>
+          <td>${echap(x.code)}</td><td>${echap(x.libelle)}</td><td>${echap(x.niveau)}</td>
+          <td><span class="pastille ${x.actif ? "p-ok" : "p-neutre"}">${x.actif ? "actif" : "inactif"}</span></td>
+          <td class="actions-tbl">
+            <button class="btn btn-petit" data-act="adm.profilEdit" data-id="${x.id}" data-lib="${echap(x.libelle)}" data-niv="${echap(x.niveau)}">Modifier</button>
+            <button class="btn btn-petit" data-act="adm.profilActif" data-id="${x.id}" data-lib="${echap(x.libelle)}" data-niv="${echap(x.niveau)}" data-actif="${x.actif ? "0" : "1"}">${x.actif ? "Désactiver" : "Activer"}</button>
+          </td></tr>`).join("") || `<tr><td colspan="5" class="texte-secondaire">Aucun profil.</td></tr>`}
+      </tbody></table>
+    </div>`;
+  $("#contenu").innerHTML = tableRoles + tableRef("TTK (thèmes)", "ttk", ttks) + tableRef("Projets", "projets", projets)
+    + tableProfil + tableFeries + tableParam;
 }
 
 /* ---------- ADMIN : journal d'audit ---------- */
@@ -1688,8 +1744,52 @@ const ACTIONS = {
   "adm.creer": async () => {
     await api("/api/admin/utilisateurs", { methode: "POST", corps: {
       login: $("#n-login").value, nom: $("#n-nom").value, email: $("#n-email").value,
-      role: $("#n-role").value, motDePasse: $("#n-mdp").value } });
+      role: $("#n-role").value, profilId: $("#n-profil").value ? Number($("#n-profil").value) : null,
+      motDePasse: $("#n-mdp").value } });
     notifier("Compte créé."); await rendreVue();
+  },
+  "adm.role": async (el) => {
+    const v = await demanderTexte("Rôle du compte", "Choisir le rôle", { options: etat.optsRoles || [], valeur: el.dataset.role || "" });
+    if (v === null || v === "") { return; }
+    await api(`/api/admin/utilisateurs/${el.dataset.id}/roles`, { methode: "POST", corps: { roles: [v] } });
+    notifier("Rôle mis à jour (prendra effet à sa prochaine connexion)."); await rendreVue();
+  },
+  "adm.roleCreer": async () => {
+    await api("/api/admin/roles", { methode: "POST", corps: { code: $("#role-code").value, libelle: $("#role-lib").value, acces: $("#role-acces").value } });
+    notifier("Rôle créé."); await rendreVue();
+  },
+  "adm.roleAcces": async (el) => {
+    const OPTS = [{ v: "TECHNICIEN", t: "Technicien (saisie)" }, { v: "MANAGER", t: "Manager (tableaux + exports)" }, { v: "ADMIN", t: "Administrateur (tout)" }];
+    const v = await demanderTexte("Droits d'accès du rôle", "Niveau de droits", { options: OPTS, valeur: el.dataset.acces });
+    if (v === null || v === "") { return; }
+    await api(`/api/admin/roles/${el.dataset.id}`, { methode: "PUT", corps: { libelle: el.dataset.lib, acces: v } });
+    notifier("Droits mis à jour."); await rendreVue();
+  },
+  "adm.roleSuppr": (el) => demanderConfirmation(
+    "Supprimer le rôle « " + el.dataset.code + " » ? (possible uniquement s'il n'est affecté à aucun compte)",
+    "Supprimer",
+    async () => { await api(`/api/admin/roles/${el.dataset.id}`, { methode: "DELETE" }); notifier("Rôle supprimé."); await rendreVue(); }),
+  "adm.profil": async (el) => {
+    const v = await demanderTexte("Profil", "Choisir le profil (métier + niveau)", { options: etat.optsProfil || [], valeur: el.dataset.prof || "", vide: "— aucun —" });
+    if (v === null) { return; }
+    await api(`/api/admin/utilisateurs/${el.dataset.id}/profil`, { methode: "POST", corps: { profilId: v ? Number(v) : null } });
+    notifier("Profil mis à jour."); await rendreVue();
+  },
+  "adm.profilCreer": async () => {
+    await api("/api/admin/profils", { methode: "POST", corps: { code: $("#profil-code").value, libelle: $("#profil-fonction").value, niveau: $("#profil-niveau").value } });
+    notifier("Profil ajouté."); await rendreVue();
+  },
+  "adm.profilEdit": async (el) => {
+    const fonction = await demanderTexte("Modifier le profil", "Fonction", { valeur: el.dataset.lib });
+    if (fonction === null) { return; }
+    const niveau = await demanderTexte("Modifier le profil", "Niveau", { valeur: el.dataset.niv });
+    if (niveau === null) { return; }
+    await api(`/api/admin/profils/${el.dataset.id}`, { methode: "PUT", corps: { libelle: fonction, niveau: niveau, actif: true } });
+    notifier("Profil modifié."); await rendreVue();
+  },
+  "adm.profilActif": async (el) => {
+    await api(`/api/admin/profils/${el.dataset.id}`, { methode: "PUT", corps: { libelle: el.dataset.lib, niveau: el.dataset.niv, actif: el.dataset.actif === "1" } });
+    notifier("Statut modifié."); await rendreVue();
   },
   "adm.mdp": async (el) => {
     const mdp = await demanderTexte("Réinitialiser le mot de passe", "Nouveau mot de passe pour « " + el.dataset.nom + " »", { type: "text", placeholder: "≥ 12 caractères" });
