@@ -1,0 +1,9 @@
+CRA - Mise a jour du 13/08/2026 : saisie des temps + roles dynamiques
+
+  1. sqlcmd -S .\SQLEXPRESS -d cra -b -i droits-saisie.sql
+  2. sqlcmd -S .\SQLEXPRESS -d cra -b -i 007_roles_dynamiques.sql
+  3. Remplacer  C:\inetpub\cra\Cra.Web.dll          par  Cra.Web.dll
+     Remplacer  C:\inetpub\cra\wwwroot\index.html    par  index.html
+  4. Restart-WebAppPool CRA   puis   Ctrl+F5
+
+
