@@ -1,0 +1,31 @@
+/* =====================================================================================
+   015_ttk_facultatif.sql — OBS Report — 14/10/2026
+   Le TTK devient FACULTATIF pour l'activité quotidienne (rubrique NORMALE).
+   Supprime la contrainte CK_saisie_ttk_normale (« TTK obligatoire en rubrique NORMALE »),
+   sinon la base refuserait encore les lignes sans TTK après la mise à jour de Cra.Regles.dll.
+   Idempotente : peut être rejouée sans effet. Aucune donnée n'est modifiée.
+   À exécuter avec un compte administrateur de la base, par exemple :
+     sqlcmd -S .\SQLEXPRESS -d cra -b -i 015_ttk_facultatif.sql
+   Retour arrière (seulement si toutes les lignes NORMALE ont un TTK) :
+     ALTER TABLE dbo.saisie_activite WITH CHECK ADD CONSTRAINT CK_saisie_ttk_normale
+       CHECK (rubrique <> 'NORMALE' OR ttk_id IS NOT NULL);
+   ===================================================================================== */
+SET XACT_ABORT ON;
+BEGIN TRANSACTION;
+
+IF EXISTS (SELECT 1 FROM sys.check_constraints
+           WHERE name = N'CK_saisie_ttk_normale' AND parent_object_id = OBJECT_ID(N'dbo.saisie_activite'))
+BEGIN
+    ALTER TABLE dbo.saisie_activite DROP CONSTRAINT CK_saisie_ttk_normale;
+    PRINT N'CK_saisie_ttk_normale supprimée : le TTK est désormais facultatif.';
+END
+ELSE
+    PRINT N'CK_saisie_ttk_normale absente : rien à faire.';
+
+IF OBJECT_ID(N'dbo.migration_journal', N'U') IS NOT NULL
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM dbo.migration_journal WHERE script_nom = N'015_ttk_facultatif')
+        INSERT INTO dbo.migration_journal (script_nom) VALUES (N'015_ttk_facultatif');
+END
+
+COMMIT TRANSACTION;
